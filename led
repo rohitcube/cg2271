@@ -1,12 +1,14 @@
 /*******************************
- * Simple Program: Control Green LED with Global Variable
+ * Simple FreeRTOS Program: Turn External RGB LED (Green + Red Channels) On/Off Based on Global Variable
  * Board: FRDM-MCXC444 (NXP MCXC444VLH MCU)
- * - Green LED: PTD5 (active-low)
+ * - External RGB LED Green Channel: PTA12 (Arduino D3 header)
+ * - External RGB LED Red Channel: PTA5 (Arduino D5 header)
  *
  * Behavior:
- * - Uses a global boolean variable 'g_led_state' (false=0/off, true=1/on).
- * - Checks the variable in a loop and sets LED state accordingly.
- * - Currently sets g_led_state to true (ON) – update as needed for your use case.
+ * - Both green and red channels are ON when g_led_state = true (1), OFF when false (0).
+ * - The global variable can be changed dynamically (e.g., from another task/ISR in your full program).
+ * - For testing: Set g_led_state = true in main() – both stay stable ON (no blink).
+ * - Add your own logic (e.g., another task) to change g_led_state during runtime.
  *******************************/
 
 #include <stdio.h>
@@ -16,35 +18,72 @@
 #include "pin_mux.h"
 #include "clock_config.h"
 #include "fsl_debug_console.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
-#define GREENLED 5  // PTD5
+#define EXTERNAL_GREEN_PIN 12  // PTA12 (Arduino D3 header)
+#define EXTERNAL_RED_PIN 5     // PTA5 (Arduino D5 header)
 
 // Global variable: false (0) = off, true (1) = on
-bool g_led_state = false;  // Initially off; change to true for testing
+volatile bool g_led_state = false;  // Volatile for dynamic changes
 
-// From your original code: initLEDs (adapted for green only)
-void initLEDs() {
-    SIM->SCGC5 |= SIM_SCGC5_PORTD_MASK;
-    PORTD->PCR[GREENLED] &= ~PORT_PCR_MUX_MASK;
-    PORTD->PCR[GREENLED] |= PORT_PCR_MUX(1);
-    GPIOD->PDDR |= (1 << GREENLED);
-}
-
-// Turn green LED on
-void ledOn() {
-    GPIOD->PCOR |= (1 << GREENLED);  // Active-low: clear to ON
-}
-
-// Turn green LED off
-void ledOff() {
-    GPIOD->PSOR |= (1 << GREENLED);  // Active-low: set to OFF
-}
-
-// Simple busy-wait delay (for potential future use)
 void delay(uint32_t count) {
     volatile uint32_t i = 0;
     for (i = 0; i < count; ++i) {
         __asm("NOP");
+    }
+}
+
+// Adapted init for external pins on Port A (both green and red)
+void initLEDs() {
+    SIM->SCGC5 |= SIM_SCGC5_PORTA_MASK;  // Enable clock for Port A (shared)
+
+    // Green pin config
+    PORTA->PCR[EXTERNAL_GREEN_PIN] &= ~PORT_PCR_MUX_MASK;
+    PORTA->PCR[EXTERNAL_GREEN_PIN] |= PORT_PCR_MUX(1);  // GPIO mode
+    GPIOA->PDDR |= (1 << EXTERNAL_GREEN_PIN);  // Set as output
+
+    // Red pin config
+    PORTA->PCR[EXTERNAL_RED_PIN] &= ~PORT_PCR_MUX_MASK;
+    PORTA->PCR[EXTERNAL_RED_PIN] |= PORT_PCR_MUX(1);  // GPIO mode
+    GPIOA->PDDR |= (1 << EXTERNAL_RED_PIN);  // Set as output
+}
+
+// Turn external green LED on
+void ledGreenOn() {
+    GPIOA->PCOR |= (1 << EXTERNAL_GREEN_PIN);  // Active-low: clear to ON (adjust if active-high)
+}
+
+// Turn external green LED off
+void ledGreenOff() {
+    GPIOA->PSOR |= (1 << EXTERNAL_GREEN_PIN);  // Active-low: set to OFF
+}
+
+// Turn external red LED on
+void ledRedOn() {
+    GPIOA->PCOR |= (1 << EXTERNAL_RED_PIN);  // Active-low: clear to ON (adjust if active-high)
+}
+
+// Turn external red LED off
+void ledRedOff() {
+    GPIOA->PSOR |= (1 << EXTERNAL_RED_PIN);  // Active-low: set to OFF
+}
+
+// FreeRTOS Task: Set both LEDs based on g_led_state (stable on/off, no blink)
+void vLedTask(void *pvParameters) {
+    for (;;) {
+        if (g_led_state) {
+        	ledGreenOn();
+        	            delay(400000);  // ~500ms ON
+        	            ledGreenOff();
+        	            delay(800000);  // ~500ms OFF
+        } else {
+        	ledRedOn();
+        	            delay(400000);  // ~500ms ON
+        	            ledRedOff();
+        	            delay(400000);  // ~500ms OFF
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));  // Small delay to check for changes; optional
     }
 }
 
@@ -57,27 +96,21 @@ int main(void) {
     BOARD_InitDebugConsole();
 #endif
 
-    PRINTF("Green LED controlled by global variable g_led_state\r\n");
+    PRINTF("External RGB LED (Green on PTA12/D3, Red on PTA5/D5) controlled by g_led_state (stable on/off)\r\n");
 
-    // Init LED
+    // Init LEDs
     initLEDs();
 
-    // Example: Set global to true (ON) for testing
+    // Example for testing: Set to true (ON); in your full program, change dynamically
     g_led_state = false;
 
-    while (1) {
-        if (g_led_state) {
-        	ledOn();
-        	            delay(800000);  // ~500ms ON
-        	            ledOff();
-        	            delay(800000);  // ~500ms OFF
-        } else {
-            ledOff();  // LED OFF if false (0)
-        }
+    // Create the LED task
+    xTaskCreate(vLedTask, "LED", 128, NULL, 1, NULL);
 
-        // Small delay to avoid 100% CPU usage; optional
-        delay(400000);
-    }
+    // Start FreeRTOS scheduler
+    vTaskStartScheduler();
 
+    // Should never reach here
+    while (1) __asm("nop");
     return 0;
 }
