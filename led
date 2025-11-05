@@ -1,11 +1,11 @@
 /*******************************
- * Simplest Program: Turn On Red LED (No Blink)
+ * Simple Program: Blink Green LED
  * Board: FRDM-MCXC444 (NXP MCXC444VLH MCU)
- * - Red LED: PTE31 (active-low)
+ * - Green LED: PTD5 (active-low)
  *
  * Behavior:
- * - Turns on red LED immediately and stays on.
- * - No switch, no blinking – just verify code runs.
+ * - Blinks green LED at ~1 Hz (500ms on, 500ms off).
+ * - No switch – blinks continuously.
  *******************************/
 
 #include <stdio.h>
@@ -15,19 +15,27 @@
 #include "clock_config.h"
 #include "fsl_debug_console.h"
 
-#define REDLED 31  // PTE31
+#define GREENLED 5  // PTD5
 
-// From your original code: initLEDs (adapted for red only)
+// From your original code: initLEDs (adapted for green only)
 void initLEDs() {
-    SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
-    PORTE->PCR[REDLED] &= ~PORT_PCR_MUX_MASK;
-    PORTE->PCR[REDLED] |= PORT_PCR_MUX(1);
-    GPIOE->PDDR |= (1 << REDLED);
+    SIM->SCGC5 |= SIM_SCGC5_PORTD_MASK; // enables the clock
+    PORTD->PCR[GREENLED] &= ~PORT_PCR_MUX_MASK; // clears PCR bits
+    PORTD->PCR[GREENLED] |= PORT_PCR_MUX(1); // sets MUX to 1 -> configures as a GPIO pin
+    GPIOD->PDDR |= (1 << GREENLED); // sets the pin as output in Port Data Direction Register
 }
 
-// Switch on red LED
-void ledOn() {
-    GPIOE->PCOR |= (1 << REDLED);  // Active-low: clear to ON
+// Toggle green LED
+void ledToggle() {
+    GPIOD->PTOR |= (1 << GREENLED); // Port Toggle Output Register (PTOR). Writing 1 to the bit for pin 5 flips its state.
+}
+
+// Simple busy-wait delay (adjust count for timing)
+void delay(uint32_t count) {
+    volatile uint32_t i = 0; // counter
+    for (i = 0; i < count; ++i) { // simple loop that runs count times
+        __asm("NOP"); // do nothing - just waste clock cycle
+    }
 }
 
 int main(void) {
@@ -39,15 +47,14 @@ int main(void) {
     BOARD_InitDebugConsole();
 #endif
 
-    PRINTF("Red LED should be ON now\r\n");
+    PRINTF("Green LED blinking now\r\n");
 
-    // Init and turn on LED
+    // Init LED
     initLEDs();
-    ledOn();
 
     while (1) {
-        // Infinite loop – LED stays ON
-        __asm volatile ("nop");
+        ledToggle();  // Toggle state
+        delay(200000);  // ~500ms delay (adjust based on your clock speed)
     }
 
     return 0;
