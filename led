@@ -1,14 +1,16 @@
 /*******************************
- * Simple Program: Blink Green LED
+ * Simple Program: Control Green LED with Global Variable
  * Board: FRDM-MCXC444 (NXP MCXC444VLH MCU)
  * - Green LED: PTD5 (active-low)
  *
  * Behavior:
- * - Blinks green LED at ~1 Hz (500ms on, 500ms off).
- * - No switch – blinks continuously.
+ * - Uses a global boolean variable 'g_led_state' (false=0/off, true=1/on).
+ * - Checks the variable in a loop and sets LED state accordingly.
+ * - Currently sets g_led_state to true (ON) – update as needed for your use case.
  *******************************/
 
 #include <stdio.h>
+#include <stdbool.h>  // For bool type
 #include "board.h"
 #include "peripherals.h"
 #include "pin_mux.h"
@@ -17,24 +19,32 @@
 
 #define GREENLED 5  // PTD5
 
+// Global variable: false (0) = off, true (1) = on
+bool g_led_state = false;  // Initially off; change to true for testing
+
 // From your original code: initLEDs (adapted for green only)
 void initLEDs() {
-    SIM->SCGC5 |= SIM_SCGC5_PORTD_MASK; // enables the clock
-    PORTD->PCR[GREENLED] &= ~PORT_PCR_MUX_MASK; // clears PCR bits
-    PORTD->PCR[GREENLED] |= PORT_PCR_MUX(1); // sets MUX to 1 -> configures as a GPIO pin
-    GPIOD->PDDR |= (1 << GREENLED); // sets the pin as output in Port Data Direction Register
+    SIM->SCGC5 |= SIM_SCGC5_PORTD_MASK;
+    PORTD->PCR[GREENLED] &= ~PORT_PCR_MUX_MASK;
+    PORTD->PCR[GREENLED] |= PORT_PCR_MUX(1);
+    GPIOD->PDDR |= (1 << GREENLED);
 }
 
-// Toggle green LED
-void ledToggle() {
-    GPIOD->PTOR |= (1 << GREENLED); // Port Toggle Output Register (PTOR). Writing 1 to the bit for pin 5 flips its state.
+// Turn green LED on
+void ledOn() {
+    GPIOD->PCOR |= (1 << GREENLED);  // Active-low: clear to ON
 }
 
-// Simple busy-wait delay (adjust count for timing)
+// Turn green LED off
+void ledOff() {
+    GPIOD->PSOR |= (1 << GREENLED);  // Active-low: set to OFF
+}
+
+// Simple busy-wait delay (for potential future use)
 void delay(uint32_t count) {
-    volatile uint32_t i = 0; // counter
-    for (i = 0; i < count; ++i) { // simple loop that runs count times
-        __asm("NOP"); // do nothing - just waste clock cycle
+    volatile uint32_t i = 0;
+    for (i = 0; i < count; ++i) {
+        __asm("NOP");
     }
 }
 
@@ -47,14 +57,26 @@ int main(void) {
     BOARD_InitDebugConsole();
 #endif
 
-    PRINTF("Green LED blinking now\r\n");
+    PRINTF("Green LED controlled by global variable g_led_state\r\n");
 
     // Init LED
     initLEDs();
 
+    // Example: Set global to true (ON) for testing
+    g_led_state = false;
+
     while (1) {
-        ledToggle();  // Toggle state
-        delay(200000);  // ~500ms delay (adjust based on your clock speed)
+        if (g_led_state) {
+        	ledOn();
+        	            delay(800000);  // ~500ms ON
+        	            ledOff();
+        	            delay(800000);  // ~500ms OFF
+        } else {
+            ledOff();  // LED OFF if false (0)
+        }
+
+        // Small delay to avoid 100% CPU usage; optional
+        delay(400000);
     }
 
     return 0;
