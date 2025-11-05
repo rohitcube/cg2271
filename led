@@ -1,0 +1,54 @@
+/*******************************
+ * Simplest Program: Turn On Red LED (No Blink)
+ * Board: FRDM-MCXC444 (NXP MCXC444VLH MCU)
+ * - Red LED: PTE31 (active-low)
+ *
+ * Behavior:
+ * - Turns on red LED immediately and stays on.
+ * - No switch, no blinking – just verify code runs.
+ *******************************/
+
+#include <stdio.h>
+#include "board.h"
+#include "peripherals.h"
+#include "pin_mux.h"
+#include "clock_config.h"
+#include "fsl_debug_console.h"
+
+#define REDLED 31  // PTE31
+
+// From your original code: initLEDs (adapted for red only)
+void initLEDs() {
+    SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
+    PORTE->PCR[REDLED] &= ~PORT_PCR_MUX_MASK;
+    PORTE->PCR[REDLED] |= PORT_PCR_MUX(1);
+    GPIOE->PDDR |= (1 << REDLED);
+}
+
+// Switch on red LED
+void ledOn() {
+    GPIOE->PCOR |= (1 << REDLED);  // Active-low: clear to ON
+}
+
+int main(void) {
+    /* Init board hardware from your setup code */
+    BOARD_InitBootPins();
+    BOARD_InitBootClocks();
+    BOARD_InitBootPeripherals();
+#ifndef BOARD_INIT_DEBUG_CONSOLE_PERIPHERAL
+    BOARD_InitDebugConsole();
+#endif
+
+    PRINTF("Red LED should be ON now\r\n");
+
+    // Init and turn on LED
+    initLEDs();
+    ledOn();
+
+    while (1) {
+        // Infinite loop – LED stays ON
+        __asm volatile ("nop");
+    }
+
+    return 0;
+}
