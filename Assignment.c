@@ -30,8 +30,15 @@
   * @brief   Application entry point.
   */
 
- // LED pin numbers
- #define BUZZER_PIN 1 // PTB1
+#define BUZZER_PIN 1 // PTB1
+
+#define UART_TX_PTE22   22     // UART2 TX pin (PTE22)
+#define UART_RX_PTE23   23     // UART2 RX pin (PTE23)
+
+#define ADC_SE0			0
+#define ADC_SE0_PIN		20
+#define ADC_SE4a		4
+#define ADC_SE4_PIN		21
 
  /*
   * @brief   Application entry point.
@@ -49,11 +56,13 @@
  DistanceMode_t distanceMode = SAFE;
  SemaphoreHandle_t xDistanceModeMutex;
 
+ static int threshold = 1000;
+ SemaphoreHandle_t xThresholdMutex;
+
+
  /* --- UART Configuration Definitions --- */
  #define BAUD_RATE 9600
- // Pin definitions are symbolic here, but configured by PORTE in init function
- #define UART_TX_PTE22   22     // UART2 TX pin (PTE22)
- #define UART_RX_PTE23   23     // UART2 RX pin (PTE23)
+
  // Priority is set to be safe for FreeRTOS ISR usage, 0 being highest priority
  #define UART_MAX_SYSCALL_PRIORITY 128
  #define MAX_MSG_LEN    64     // Maximum expected message length
@@ -215,36 +224,36 @@
   * This task waits for threshold messages posted by the UART ISR and triggers
   * the alarm based on the message content.
   */
-static void ultrasonicDataProcessorTask(void *p) {
-	while(1) {
-		PRINTF("Ultrasonic Data Processor Task Running...\r\n");
-		TMessage msg;
-		// Wait indefinitely for a message from the UART ISR queue
-		if (xQueueReceive(rx_queue, (TMessage *) &msg, portMAX_DELAY) == pdTRUE) {
-				PRINTF("RX Raw: %s", msg.message); // Print raw message for debugging
-				if (xSemaphoreTake(xDistanceModeMutex, portMAX_DELAY) == pdTRUE) {
-					PRINTF("Semaphore Acquired");
-					// Compare received message to known threshold strings
-					if (strcmp(msg.message, T1_MESSAGE) == 0) {
-						PRINTF("-> T1 Threshold Detected (>= 500mm).\r\n");
-						distanceMode = CLOSE;
-					} else if (strcmp(msg.message, T2_MESSAGE) == 0) {
-						PRINTF("-> T2 Threshold Detected (>= 100mm).\r\n");
-						distanceMode = TOO_CLOSE;
-					} else if (strcmp(msg.message, NO_OBJECT_MESSAGE) == 0) {
-						PRINTF("-> No Object Detected.\r\n");
-						distanceMode = SAFE;
+	static void ultrasonicDataProcessorTask(void *p) {
+		while(1) {
+			PRINTF("Ultrasonic Data Processor Task Running...\r\n");
+			TMessage msg;
+			// Wait indefinitely for a message from the UART ISR queue
+			if (xQueueReceive(rx_queue, (TMessage *) &msg, portMAX_DELAY) == pdTRUE) {
+					PRINTF("RX Raw: %s", msg.message); // Print raw message for debugging
+					if (xSemaphoreTake(xDistanceModeMutex, portMAX_DELAY) == pdTRUE) {
+						PRINTF("Semaphore Acquired");
+						// Compare received message to known threshold strings
+						if (strcmp(msg.message, T1_MESSAGE) == 0) {
+							PRINTF("-> T1 Threshold Detected (>= 500mm).\r\n");
+							distanceMode = CLOSE;
+						} else if (strcmp(msg.message, T2_MESSAGE) == 0) {
+							PRINTF("-> T2 Threshold Detected (>= 100mm).\r\n");
+							distanceMode = TOO_CLOSE;
+						} else if (strcmp(msg.message, NO_OBJECT_MESSAGE) == 0) {
+							PRINTF("-> No Object Detected.\r\n");
+							distanceMode = SAFE;
+						} else {
+							PRINTF("-> Unknown message format received. Message: %s\r\n", msg.message);
+						}
+						xSemaphoreGive(xDistanceModeMutex);
 					} else {
-						PRINTF("-> Unknown message format received. Message: %s\r\n", msg.message);
+						PRINTF("FAILED TO ACQUIRE SEMAPHORE");
 					}
-					xSemaphoreGive(xDistanceModeMutex);
-				} else {
-					PRINTF("FAILED TO ACQUIRE SEMAPHORE");
-				}
+			}
+			vTaskDelay(100);
 		}
-		vTaskDelay(100);
 	}
-}
 
  /**
   * @brief Polls the ESP32 periodically for new data.
@@ -372,33 +381,129 @@ static void ultrasonicDataProcessorTask(void *p) {
  TickType_t xNoteEndTime = 0;
 
  void buzzerTask(void *p) {
-     int i = 0;
-     for (;;) {
-         // Check Distance Mode and Start Next Note ---
-         if (xTaskGetTickCount() >= xNoteEndTime && xSemaphoreTake(xDistanceModeMutex, 0) == pdTRUE) { // Use a short wait, not MAX_DELAY
-             if (distanceMode == TOO_CLOSE || isButtonPressed()) {
-                 // Calculate next note duration in ticks
-                 TickType_t xDurationTicks = pdMS_TO_TICKS((int)((double)duration_array[i] * 0.3));
+	 int i = 0;
+	 for (;;) {
+		 // Check Distance Mode and Start Next Note ---
+		 if (xTaskGetTickCount() >= xNoteEndTime && xSemaphoreTake(xDistanceModeMutex, 0) == pdTRUE) { // Use a short wait, not MAX_DELAY
+			 if (distanceMode == TOO_CLOSE || isButtonPressed()) {
+				 // Calculate next note duration in ticks
+				 TickType_t xDurationTicks = pdMS_TO_TICKS((int)((double)duration_array[i] * 0.3));
 
-                 start_buzzer_pwm_with_freq(freq_array[i]);
+				 start_buzzer_pwm_with_freq(freq_array[i]);
 
-                 // Set the time when this note should stop
-                 xNoteEndTime = xTaskGetTickCount() + xDurationTicks;
+				 // Set the time when this note should stop
+				 xNoteEndTime = xTaskGetTickCount() + xDurationTicks;
 
-                 i = (i + 1) % ARRAY_LENGTH;
-             } else {
-                 stopPWM();
-                 xNoteEndTime = 0; // Reset timer
-                 i = 0;
-             }
-             xSemaphoreGive(xDistanceModeMutex);
-         }
+				 i = (i + 1) % ARRAY_LENGTH;
+			 } else {
+				 stopPWM();
+				 xNoteEndTime = 0; // Reset timer
+				 i = 0;
+			 }
+			 xSemaphoreGive(xDistanceModeMutex);
+		 }
 
-         // Ensure the task yields to let the scheduler run
-         vTaskDelay(pdMS_TO_TICKS(10));
-     }
+		 // Ensure the task yields to let the scheduler run
+		 vTaskDelay(pdMS_TO_TICKS(10));
+	 }
  }
 
+ void initADC() {
+ 	// Configure interrupt
+ 	NVIC_DisableIRQ(ADC0_IRQn);
+ 	NVIC_ClearPendingIRQ(ADC0_IRQn);
+
+ 	// Enable clock gating to ADC0
+ 	SIM->SCGC6 |= SIM_SCGC6_ADC0_MASK;
+
+ 	// Enable clock gating to PTE
+ 	// This is done when we initialize the PWM
+ 	// but we want to make our function self-contained
+ 	// so we do it again
+ 	SIM->SCGC5 |= SIM_SCGC5_PORTE_MASK;
+
+ 	// Set PTE20 and PTE21 (ADC0_SE0 and ADC_SE4a) to ADC
+ 	PORTE->PCR[ADC_SE0_PIN] &= ~PORT_PCR_MUX_MASK;
+ 	PORTE->PCR[ADC_SE0_PIN] |= PORT_PCR_MUX(0);
+
+ 	PORTE->PCR[ADC_SE4_PIN] &= ~PORT_PCR_MUX_MASK;
+ 	PORTE->PCR[ADC_SE4_PIN] |= PORT_PCR_MUX(0);
+
+
+ 	// Configure the ADC
+ 	// Enable ADC interrupt
+ 	ADC0->SC1[0] |= ADC_SC1_AIEN_MASK;
+
+ 	// Select single-ended ADC
+ 	ADC0->SC1[0] &= ~ADC_SC1_DIFF_MASK;
+ 	ADC0->SC1[0] |= ADC_SC1_DIFF(0b0);
+
+ 	// Set 12 bit conversion
+ 	ADC0->CFG1 &= ~ADC_CFG1_MODE_MASK;
+ 	ADC0->CFG1 |= ADC_CFG1_MODE(0b11);
+
+ 	// Use software trigger
+ 	ADC0->SC2 &= ~ADC_SC2_ADTRG_MASK;
+
+ 	// Use VALTH and VALTL
+ 	ADC0->SC2 &= ~ADC_SC2_REFSEL_MASK;
+ 	ADC0->SC2 |= ADC_SC2_REFSEL(0b01);
+
+ 	// Don't use averaging
+ 	ADC0->SC3 &= ~ADC_SC3_AVGE_MASK;
+ 	ADC0->SC3 |= ADC_SC3_AVGE(0);
+
+ 	// Switch off continuous conversion.
+ 	ADC0->SC3 &= ~ADC_SC3_ADCO_MASK;
+ 	ADC0->SC3 |= ADC_SC3_ADCO(0);
+
+ 	// Highest priority
+ 	NVIC_SetPriority(ADC0_IRQn, 0);
+ 	NVIC_EnableIRQ(ADC0_IRQn);
+
+ }
+
+ int result[2];
+
+ void startADC(int channel) {
+ 	ADC0->SC1[0] &= ~ADC_SC1_ADCH_MASK;
+ 	ADC0->SC1[0] |= ADC_SC1_ADCH(channel);
+ }
+
+ void ADC0_IRQHandler(){
+ 	static int turn=0;
+
+ 	NVIC_ClearPendingIRQ(ADC0_IRQn);
+ 	if(ADC0->SC1[0] & ADC_SC1_COCO_MASK) {
+ 		// Read the result into result[turn]
+ 		result[turn] = ADC0->R[0];/* Statement to read result */
+ 		turn = 1 - turn;
+ 		if(turn == 0) {
+ 			// Call startADC to convert PTE20
+ 			startADC(ADC_SE0);
+ 		} else {
+ 			//Call startADC to convert PTE21
+ 			startADC(ADC_SE4a);
+ 		}
+ 	}
+ }
+
+void joystickTask(void *p) {
+	for (;;) {
+		if (xSemaphoreTake(xThresholdMutex, 0) == pdTRUE) {
+		// Joystick pushed up, increment threshold to max of 2000 (2m)
+			if (result[0] > 40000) {
+				threshold = threshold + 30 > 2000 ? 2000 : threshold + 30;
+			// Joystick pushed down, decrement threshold to max of 300 (30cm)
+			} else if (result[0] < 20000) {
+				threshold = threshold - 30 < 300 ? 300 : threshold - 30;
+			}
+			xSemaphoreGive(xThresholdMutex);
+			PRINTF("Threshold: %d\r\n", threshold);
+		}
+		vTaskDelay(pdMS_TO_TICKS(10));
+	}
+}
 
  int main(void) {
 
@@ -414,6 +519,9 @@ static void ultrasonicDataProcessorTask(void *p) {
 	 initPWM();
 	 initUART2_Bidirectional(BAUD_RATE);
 	 initButton();
+	 initADC();
+
+	 startADC(ADC_SE0);
 
      // Create the FreeRTOS message queue for received data (QLEN messages, each of size TMessage)
    rx_queue = xQueueCreate(QLEN, sizeof(TMessage));
@@ -422,6 +530,7 @@ static void ultrasonicDataProcessorTask(void *p) {
    }
 
 	 xDistanceModeMutex = xSemaphoreCreateMutex();
+	 xThresholdMutex = xSemaphoreCreateMutex();
 
 	 distanceMode = TOO_CLOSE;
 
@@ -432,13 +541,19 @@ static void ultrasonicDataProcessorTask(void *p) {
 		 PRINTF("BuzzerTask init success.\r\n");
 	 }
 
-	 if (xTaskCreate(pollingTask, "PollingTask", configMINIMAL_STACK_SIZE + 200, NULL, 2, NULL) != pdPASS) {
+	 if (xTaskCreate(joystickTask, "JoystickTask", configMINIMAL_STACK_SIZE + 200, NULL, 2, NULL) != pdPASS) {
+		 PRINTF("JoystickTask init fail.\r\n");
+   } else {
+     PRINTF("JoystickTask init success.\r\n");
+   }
+
+	 if (xTaskCreate(pollingTask, "PollingTask", configMINIMAL_STACK_SIZE + 200, NULL, 3, NULL) != pdPASS) {
 		 PRINTF("pollingTask init fail.\r\n");
    } else {
      PRINTF("pollingTask init success.\r\n");
    }
 
-	 if (xTaskCreate(ultrasonicDataProcessorTask, "DataProcessor", configMINIMAL_STACK_SIZE + 200, NULL, 3, NULL) != pdPASS) {
+	 if (xTaskCreate(ultrasonicDataProcessorTask, "DataProcessor", configMINIMAL_STACK_SIZE + 200, NULL, 4, NULL) != pdPASS) {
 		 PRINTF("pollingTask init fail.\r\n");
    } else {
      PRINTF("pollingTask init success.\r\n");
