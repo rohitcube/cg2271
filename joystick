@@ -30,6 +30,8 @@
 
 #define ADC_SE0			0
 #define ADC_SE0_PIN		20
+#define ADC_SE4a		4
+#define ADC_SE4_PIN		21
 
 void initADC() {
 	// Configure interrupt
@@ -49,6 +51,10 @@ void initADC() {
 	PORTE->PCR[ADC_SE0_PIN] &= ~PORT_PCR_MUX_MASK;
 	PORTE->PCR[ADC_SE0_PIN] |= PORT_PCR_MUX(0);
 
+	PORTE->PCR[ADC_SE4_PIN] &= ~PORT_PCR_MUX_MASK;
+	PORTE->PCR[ADC_SE4_PIN] |= PORT_PCR_MUX(0);
+
+
 	// Configure the ADC
 	// Enable ADC interrupt
 	ADC0->SC1[0] |= ADC_SC1_AIEN_MASK;
@@ -59,7 +65,7 @@ void initADC() {
 
 	// Set 12 bit conversion
 	ADC0->CFG1 &= ~ADC_CFG1_MODE_MASK;
-	ADC0->CFG1 |= ADC_CFG1_MODE(0b01);
+	ADC0->CFG1 |= ADC_CFG1_MODE(0b11);
 
 	// Use software trigger
 	ADC0->SC2 &= ~ADC_SC2_ADTRG_MASK;
@@ -81,25 +87,31 @@ void initADC() {
 	NVIC_EnableIRQ(ADC0_IRQn);
 
 }
-
-int result;
+int result[2];
 
 void startADC(int channel) {
-	PRINTF("Started ADC on channel %d. Waiting\r\n", channel);
-
 	ADC0->SC1[0] &= ~ADC_SC1_ADCH_MASK;
 	ADC0->SC1[0] |= ADC_SC1_ADCH(channel);
 }
 
 void ADC0_IRQHandler(){
+	static int turn=0;
+
 	NVIC_ClearPendingIRQ(ADC0_IRQn);
 	if(ADC0->SC1[0] & ADC_SC1_COCO_MASK) {
-		// Read the result into result
-		result = ADC0->R[0];/* Statement to read result */
-		startADC(ADC_SE0);
+		// Read the result into result[turn]
+		result[turn] = ADC0->R[0];/* Statement to read result */
+		turn = 1 - turn;
+		if(turn == 0) {
+			// Call startADC to convert PTE20
+			startADC(ADC_SE0);
+
+		} else {
+			//Call startADC to convert PTE21
+			startADC(ADC_SE4a);
+		}
 	}
 }
-
 // Configure the MCG Internal Reference Clock
 void setMCGIRClk() {
 
@@ -223,15 +235,20 @@ int main(void) {
     initADC();
     startADC(ADC_SE0);
     /* Force the counter to be placed into memory. */
-    volatile static int i = 0 ;
     /* Enter an infinite loop, just incrementing a counter. */
+    int value = 1000;
     while(1) {
 
         // Convert values
-        int amt = (int) (result / 4096.0 * 255.0);
-		printf(result);
-
-        setPWM(amt);
+        //default neutral 65535 for both x and y results
+    	if (result[0] < 65535) {
+    		value++;
+    	}
+    	else if (result[1] < 65535) {
+    		value--;
+    	}
+        PRINTF("Value: \n");
+        PRINTF("%d\r\n", value);
         /* 'Dummy' NOP to allow source level single stepping of
             tight while() loop */
         __asm volatile ("nop");
