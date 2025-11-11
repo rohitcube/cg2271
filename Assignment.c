@@ -10,7 +10,6 @@
  * @brief   Application entry point.
  */
  #include <stdio.h>
- #include <stdlib.h>
  #include "board.h"
  #include "peripherals.h"
  #include "pin_mux.h"
@@ -37,9 +36,14 @@
 #define UART_RX_PTE23   23     // UART2 RX pin (PTE23)
 
 #define ADC_SE0			0
-#define ADC_SE0_PIN		20
+#define ADC_SE0_PIN		20 // PTE20
 #define ADC_SE4a		4
-#define ADC_SE4_PIN		21
+#define ADC_SE4_PIN		21 // PTE21
+
+#define GREEN_LED_PIN 12 // PTA12
+#define BLUE_LED_PIN 5 // PTA5
+#define RED_LED_PIN 13 // PTA13
+
 
  /*
   * @brief   Application entry point.
@@ -279,7 +283,7 @@
      // Send the polling message. This enables the TX interrupt.
      sendMessage((char *)poll_message);
 
-     vTaskDelay(pdMS_TO_TICKS(400));
+     vTaskDelay(pdMS_TO_TICKS(300));
    }
  }
 
@@ -516,6 +520,55 @@ void joystickTask(void *p) {
 	}
 }
 
+void initLEDs() {
+	SIM->SCGC5 |= SIM_SCGC5_PORTA_MASK;  // Enable clock for Port A (shared)
+
+	// Green pin config
+	PORTA->PCR[GREEN_LED_PIN] &= ~PORT_PCR_MUX_MASK;
+	PORTA->PCR[GREEN_LED_PIN] |= PORT_PCR_MUX(1);  // GPIO mode
+	GPIOA->PDDR |= (1 << GREEN_LED_PIN);  // Set as output
+
+	// Red pin config
+	PORTA->PCR[RED_LED_PIN] &= ~PORT_PCR_MUX_MASK;
+	PORTA->PCR[RED_LED_PIN] |= PORT_PCR_MUX(1);  // GPIO mode
+	GPIOA->PDDR |= (1 << RED_LED_PIN);  // Set as output
+
+	// Blue pin config
+	PORTA->PCR[BLUE_LED_PIN] &= ~PORT_PCR_MUX_MASK;
+	PORTA->PCR[BLUE_LED_PIN] |= PORT_PCR_MUX(1);  // GPIO mode
+	GPIOA->PDDR |= (1 << BLUE_LED_PIN);  // Set as output
+}
+
+void ledOff(int LED_PIN) {
+    GPIOA->PCOR |= (1 << LED_PIN);
+}
+
+void ledOn(int LED_PIN) {
+    GPIOA->PSOR |= (1 << LED_PIN);
+}
+
+void ledTask(void *p) {
+	for (;;) {
+		if (xSemaphoreTake(xDistanceModeMutex, 0) == pdTRUE) {
+			if (distanceMode == TOO_CLOSE || isButtonPressed()) {
+				ledOn(RED_LED_PIN);
+				ledOff(GREEN_LED_PIN);
+				ledOff(BLUE_LED_PIN);
+			} else if (distanceMode == CLOSE) {
+				ledOn(RED_LED_PIN);
+				ledOn(GREEN_LED_PIN);
+				ledOff(BLUE_LED_PIN);
+			} else if (distanceMode == SAFE) {
+				ledOff(RED_LED_PIN);
+				ledOn(GREEN_LED_PIN);
+				ledOff(BLUE_LED_PIN);
+			}
+			xSemaphoreGive(xDistanceModeMutex);
+		}
+		vTaskDelay(pdMS_TO_TICKS(10));
+	}
+}
+
  int main(void) {
 
 	 /* Init board hardware. */
@@ -531,6 +584,8 @@ void joystickTask(void *p) {
 	 initUART2_Bidirectional(BAUD_RATE);
 	 initButton();
 	 initADC();
+	 initLEDs();
+	 PRINTF("Init Complete\r\n");
 
 	 startADC(ADC_SE0);
 
@@ -545,39 +600,38 @@ void joystickTask(void *p) {
 
 	 distanceMode = SAFE;
 
-
-	 if (xTaskCreate(buzzerTask, "BuzzerTask", configMINIMAL_STACK_SIZE + 200, NULL, 1, NULL) != pdPASS) {
-		 PRINTF("BuzzerTask init fail.\r\n");
-	 } else {
-		 PRINTF("BuzzerTask init success.\r\n");
-	 }
-
-	 if (xTaskCreate(joystickTask, "JoystickTask", configMINIMAL_STACK_SIZE + 200, NULL, 2, NULL) != pdPASS) {
+	 if (xTaskCreate(joystickTask, "JoystickTask", configMINIMAL_STACK_SIZE + 100, NULL, 0, NULL) != pdPASS) {
 		 PRINTF("JoystickTask init fail.\r\n");
    } else {
      PRINTF("JoystickTask init success.\r\n");
    }
 
-	 if (xTaskCreate(pollingTask, "PollingTask", configMINIMAL_STACK_SIZE + 200, NULL, 3, NULL) != pdPASS) {
+	 if (xTaskCreate(ledTask, "LedTask", configMINIMAL_STACK_SIZE + 100, NULL, 1, NULL) != pdPASS) {
+		 PRINTF("LedTask init fail.\r\n");
+	 } else {
+		 PRINTF("LedTask init success.\r\n");
+	 }
+
+	 if (xTaskCreate(buzzerTask, "BuzzerTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL) != pdPASS) {
+		 PRINTF("BuzzerTask init fail.\r\n");
+	 } else {
+		 PRINTF("BuzzerTask init success.\r\n");
+	 }
+
+	 if (xTaskCreate(pollingTask, "PollingTask", configMINIMAL_STACK_SIZE + 100, NULL, 3, NULL) != pdPASS) {
 		 PRINTF("pollingTask init fail.\r\n");
    } else {
      PRINTF("pollingTask init success.\r\n");
    }
 
-	 if (xTaskCreate(ultrasonicDataProcessorTask, "DataProcessor", configMINIMAL_STACK_SIZE + 200, NULL, 4, NULL) != pdPASS) {
-		 PRINTF("pollingTask init fail.\r\n");
+	 if (xTaskCreate(ultrasonicDataProcessorTask, "DataProcessor", configMINIMAL_STACK_SIZE + 100, NULL, 4, NULL) != pdPASS) {
+		 PRINTF("ultrasonicDataProcessorTask init fail.\r\n");
    } else {
-     PRINTF("pollingTask init success.\r\n");
+     PRINTF("ultrasonicDataProcessorTask init success.\r\n");
    }
 
- //    if (xTaskCreate(modeSwitchTask, "ModeSwitchTask", configMINIMAL_STACK_SIZE + 200, NULL, 2, NULL) != pdPASS) {
- //		PRINTF("ModeSwitchTask init fail.\r\n");
- //	} else {
- //		PRINTF("ModeSwitchTask init success.\r\n");
- //	}
+	 vTaskStartScheduler();
 
-     vTaskStartScheduler();
-
-     return 0;
+	 return 0;
  }
 
