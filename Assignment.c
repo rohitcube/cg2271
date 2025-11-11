@@ -10,6 +10,7 @@
  * @brief   Application entry point.
  */
  #include <stdio.h>
+ #include <stdlib.h>
  #include "board.h"
  #include "peripherals.h"
  #include "pin_mux.h"
@@ -56,7 +57,7 @@
  DistanceMode_t distanceMode = SAFE;
  SemaphoreHandle_t xDistanceModeMutex;
 
- static int threshold = 1000;
+ static int threshold = 500;
  SemaphoreHandle_t xThresholdMutex;
 
 
@@ -197,21 +198,31 @@
 
      TMessage msg;
    rx_data = UART2->D;
-   recv_buffer[recv_ptr++] = rx_data;
- //    PRINTF("Char received: %d in %d\r\n", rx_data, recv_ptr-1);
 
-     if(rx_data == '\n') {
-     // Copy over the string
-     BaseType_t hpw;
-     recv_buffer[recv_ptr]='\0';
-     strncpy(msg.message, recv_buffer, MAX_MSG_LEN);
- //		PRINTF("Received Message: %s\r\n", msg.message);
-     xQueueSendFromISR(rx_queue, (void *)&msg, &hpw);
- //		PRINTF("Add to Queue success: %d\r\n", xQueueSendFromISR(rx_queue, (void *)&msg, &hpw));
+   if (recv_ptr < (MAX_MSG_LEN - 1)) {
+		 recv_buffer[recv_ptr++] = rx_data;
+	 //    PRINTF("Char received: %d in %d\r\n", rx_data, recv_ptr-1);
 
-     portYIELD_FROM_ISR(hpw);
+			 if(rx_data == '\n') {
+			 // Copy over the string
+			 BaseType_t hpw;
+			 recv_buffer[recv_ptr]='\0';
+			 strncpy(msg.message, recv_buffer, MAX_MSG_LEN);
+	 //		PRINTF("Received Message: %s\r\n", msg.message);
+			 xQueueSendFromISR(rx_queue, (void *)&msg, &hpw);
+	 //		PRINTF("Add to Queue success: %d\r\n", xQueueSendFromISR(rx_queue, (void *)&msg, &hpw));
+
+			 portYIELD_FROM_ISR(hpw);
+			 recv_ptr = 0;
+		 }
+   }	else {
+     // --- BUFFER OVERFLOW PREVENTED ---
+     // We are full, but we never got a newline.
+     // Discard the entire buffer and start over.
      recv_ptr = 0;
-   }
+     PRINTF("ERROR: Recv buffer overflow, ran recv buffer reset\r\n");
+     // Optionally, you could log this error.
+ }
 
  //      msg.message[MAX_MSG_LEN - 1] = '\0'; // Double-check null termination for safety
 
@@ -230,28 +241,30 @@
 			TMessage msg;
 			// Wait indefinitely for a message from the UART ISR queue
 			if (xQueueReceive(rx_queue, (TMessage *) &msg, portMAX_DELAY) == pdTRUE) {
-					PRINTF("RX Raw: %s", msg.message); // Print raw message for debugging
-					if (xSemaphoreTake(xDistanceModeMutex, portMAX_DELAY) == pdTRUE) {
-						PRINTF("Semaphore Acquired");
-						// Compare received message to known threshold strings
-						if (strcmp(msg.message, T1_MESSAGE) == 0) {
-							PRINTF("-> T1 Threshold Detected (>= 500mm).\r\n");
-							distanceMode = CLOSE;
-						} else if (strcmp(msg.message, T2_MESSAGE) == 0) {
-							PRINTF("-> T2 Threshold Detected (>= 100mm).\r\n");
+					if (xSemaphoreTake(xDistanceModeMutex, portMAX_DELAY) == pdTRUE &&
+							xSemaphoreTake(xThresholdMutex, portMAX_DELAY) == pdTRUE) {
+						int dist = atoi(msg.message);
+						PRINTF("Distance: %d\r\n", dist);
+						PRINTF("Threshold: %d\r\n", threshold);
+						if (dist == 0) {
+							PRINTF("Invalid message from ESP\r\n");
+						}
+						if (dist <= threshold) {
 							distanceMode = TOO_CLOSE;
-						} else if (strcmp(msg.message, NO_OBJECT_MESSAGE) == 0) {
-							PRINTF("-> No Object Detected.\r\n");
-							distanceMode = SAFE;
+							PRINTF("TOO_CLOSE Threshold Detected.\r\n");
+						// define "CLOSE" dist as threshold * 2
+						} else if (dist <= threshold * 2) {
+							distanceMode = CLOSE;
+							PRINTF("CLOSE Threshold Detected.\r\n");
 						} else {
-							PRINTF("-> Unknown message format received. Message: %s\r\n", msg.message);
+							distanceMode = SAFE;
+							PRINTF("SAFE Threshold Detected.\r\n");
 						}
 						xSemaphoreGive(xDistanceModeMutex);
-					} else {
-						PRINTF("FAILED TO ACQUIRE SEMAPHORE");
+						xSemaphoreGive(xThresholdMutex);
 					}
 			}
-			vTaskDelay(100);
+			vTaskDelay(50);
 		}
 	}
 
@@ -266,8 +279,7 @@
      // Send the polling message. This enables the TX interrupt.
      sendMessage((char *)poll_message);
 
-     // Wait for 2 seconds (2000 milliseconds) before polling again
-     vTaskDelay(pdMS_TO_TICKS(500));
+     vTaskDelay(pdMS_TO_TICKS(400));
    }
  }
 
@@ -352,7 +364,7 @@
 
 	 // Use floating-point division to maintain precision
 	 long mod_value = (long)((double)base_clk_freq_hz / (2.0 * (double)prescalar_value * (double)freq)) - 1L;
-	 printf("MOD value: %ld\r\n", mod_value);
+//	 printf("MOD value: %ld\r\n", mod_value);
 
 	 return (mod_value < 1) ? 1 : (int)mod_value;
  }
@@ -493,13 +505,12 @@ void joystickTask(void *p) {
 		if (xSemaphoreTake(xThresholdMutex, 0) == pdTRUE) {
 		// Joystick pushed up, increment threshold to max of 2000 (2m)
 			if (result[0] > 40000) {
-				threshold = threshold + 30 > 2000 ? 2000 : threshold + 30;
-			// Joystick pushed down, decrement threshold to max of 300 (30cm)
+				threshold = threshold + 50 > 2000 ? 2000 : threshold + 10;
+			// Joystick pushed down, decrement threshold to max of 200 (20cm)
 			} else if (result[0] < 20000) {
-				threshold = threshold - 30 < 300 ? 300 : threshold - 30;
+				threshold = threshold - 50 < 200 ? 200 : threshold - 10;
 			}
 			xSemaphoreGive(xThresholdMutex);
-			PRINTF("Threshold: %d\r\n", threshold);
 		}
 		vTaskDelay(pdMS_TO_TICKS(10));
 	}
@@ -532,7 +543,7 @@ void joystickTask(void *p) {
 	 xDistanceModeMutex = xSemaphoreCreateMutex();
 	 xThresholdMutex = xSemaphoreCreateMutex();
 
-	 distanceMode = TOO_CLOSE;
+	 distanceMode = SAFE;
 
 
 	 if (xTaskCreate(buzzerTask, "BuzzerTask", configMINIMAL_STACK_SIZE + 200, NULL, 1, NULL) != pdPASS) {
