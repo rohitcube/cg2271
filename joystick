@@ -229,7 +229,7 @@ int main(void) {
 
         // Convert values
         int amt = (int) (result / 4096.0 * 255.0);
-		printf(result)
+		printf(result);
 
         setPWM(amt);
         /* 'Dummy' NOP to allow source level single stepping of
