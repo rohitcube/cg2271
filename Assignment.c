@@ -15,6 +15,7 @@
  #include "pin_mux.h"
  #include "clock_config.h"
  #include "fsl_debug_console.h"
+ #include "button.h"
  /* TODO: insert other include files here. */
 
  #include "duration_array.h"
@@ -74,27 +75,6 @@
 
  // Global buffer for UART transmission (accessed by sendMessage and ISR)
  static char send_buffer[MAX_MSG_LEN];
-
- /* --- Application Functions --- */
-
- /**
-  * @brief Placeholder function to simulate ringing a buzzer/activating an alarm.
-  * In a real application, this would control a GPIO pin connected to a peripheral.
-  *
-  * @param threshold_level 1 for T1 (warning), 2 for T2 (critical), 0 for reset.
-  */
- void trigger_alarm(int threshold_level) {
-   if (threshold_level == 1) {
-     PRINTF("!!! ALARM: T1 (Long Distance - >= 500mm) Alert Triggered !!!\r\n");
-     // Placeholder: code to activate a warning light or mild buzzer
-   } else if (threshold_level == 2) {
-     PRINTF("!!! CRITICAL ALARM: T2 (Close Distance - >= 100mm) Alert Triggered !!!\r\n");
-     // Placeholder: code to activate a loud buzzer
-   } else {
-     PRINTF("Alarm deactivated (Object moved further away or not present).\r\n");
-     // Placeholder: code to turn off all output devices
-   }
- }
 
  /* --- Hardware Initialization --- */
 
@@ -184,21 +164,19 @@
 
    // --- 1. TRANSMIT Logic (TDRE: Transmit Data Register Empty) ---
    // This check handles the TIE flag being set
-   if(UART2->S1 & UART_S1_TDRE_MASK)
-   {
+   if(UART2->S1 & UART_S1_TDRE_MASK) {
      // Check if we reached the null terminator
-     if(send_buffer[send_ptr] == '\0') {
+     if (send_buffer[send_ptr] == '\0') {
        send_ptr = 0;
 
        // Disable the transmit interrupt (TIE) to stop sending
        UART2->C2 &= ~UART_C2_TIE_MASK;
 
        // Disable the transmitter
-     UART2->C2 &= ~UART_C2_TE_MASK;
-
-     }
-     else {
+       UART2->C2 &= ~UART_C2_TE_MASK;
+     } else {
        // Write the next character to the data register
+//       PRINTF("%c\r\n", send_buffer[send_ptr]);
        UART2->D = send_buffer[send_ptr++];
      }
    }
@@ -237,37 +215,36 @@
   * This task waits for threshold messages posted by the UART ISR and triggers
   * the alarm based on the message content.
   */
- static void ultrasonicDataProcessorTask(void *p) {
-   while(1) {
-     PRINTF("Ultrasonic Data Processor Task Running...\r\n");
-     TMessage msg;
-     // Wait indefinitely for a message from the UART ISR queue
-     if(xQueueReceive(rx_queue, (TMessage *) &msg, portMAX_DELAY) == pdTRUE) {
-       PRINTF("RX Raw: %s", msg.message); // Print raw message for debugging
-       if (xSemaphoreTake(xDistanceModeMutex, portMAX_DELAY) == pdTRUE) {
-         PRINTF("Semaphore Acquired");
-       // Compare received message to known threshold strings
-       if (strcmp(msg.message, T1_MESSAGE) == 0) {
-       PRINTF("-> T1 Threshold Detected (>= 500mm).\r\n");
-       distanceMode = CLOSE;
-       } else if (strcmp(msg.message, T2_MESSAGE) == 0) {
-       PRINTF("-> T2 Threshold Detected (>= 100mm).\r\n");
-       distanceMode = TOO_CLOSE;
-       } else if (strcmp(msg.message, NO_OBJECT_MESSAGE) == 0) {
-       PRINTF("-> No Object Detected.\r\n");
-       distanceMode = SAFE;
-       } else {
-       PRINTF("-> Unknown message format received. Message: %s\r\n", msg.message);
-       }
-       } else {
-         PRINTF("FAILED TO ACQUIRE SEMAPHORE");
-       }
-       xSemaphoreGive(xDistanceModeMutex);
-     }
-     // Yield for other tasks
-     vTaskDelay(100);
-   }
- }
+static void ultrasonicDataProcessorTask(void *p) {
+	while(1) {
+		PRINTF("Ultrasonic Data Processor Task Running...\r\n");
+		TMessage msg;
+		// Wait indefinitely for a message from the UART ISR queue
+		if (xQueueReceive(rx_queue, (TMessage *) &msg, portMAX_DELAY) == pdTRUE) {
+				PRINTF("RX Raw: %s", msg.message); // Print raw message for debugging
+				if (xSemaphoreTake(xDistanceModeMutex, portMAX_DELAY) == pdTRUE) {
+					PRINTF("Semaphore Acquired");
+					// Compare received message to known threshold strings
+					if (strcmp(msg.message, T1_MESSAGE) == 0) {
+						PRINTF("-> T1 Threshold Detected (>= 500mm).\r\n");
+						distanceMode = CLOSE;
+					} else if (strcmp(msg.message, T2_MESSAGE) == 0) {
+						PRINTF("-> T2 Threshold Detected (>= 100mm).\r\n");
+						distanceMode = TOO_CLOSE;
+					} else if (strcmp(msg.message, NO_OBJECT_MESSAGE) == 0) {
+						PRINTF("-> No Object Detected.\r\n");
+						distanceMode = SAFE;
+					} else {
+						PRINTF("-> Unknown message format received. Message: %s\r\n", msg.message);
+					}
+					xSemaphoreGive(xDistanceModeMutex);
+				} else {
+					PRINTF("FAILED TO ACQUIRE SEMAPHORE");
+				}
+		}
+		vTaskDelay(100);
+	}
+}
 
  /**
   * @brief Polls the ESP32 periodically for new data.
@@ -359,16 +336,16 @@
  }
 
  long calculateModForFreq(int freq) {
-     long base_clk_freq_hz = 8000000L; // 8 MHz
-     int prescalar_value = 1;
+	 long base_clk_freq_hz = 8000000L; // 8 MHz
+	 int prescalar_value = 1;
 
-     if (freq == 0) return 1;
+	 if (freq == 0) return 1;
 
-     // Use floating-point division to maintain precision
-     long mod_value = (long)((double)base_clk_freq_hz / (2.0 * (double)prescalar_value * (double)freq)) - 1L;
-     printf("MOD value: %ld\r\n", mod_value);
+	 // Use floating-point division to maintain precision
+	 long mod_value = (long)((double)base_clk_freq_hz / (2.0 * (double)prescalar_value * (double)freq)) - 1L;
+	 printf("MOD value: %ld\r\n", mod_value);
 
-     return (mod_value < 1) ? 1 : (int)mod_value;
+	 return (mod_value < 1) ? 1 : (int)mod_value;
  }
 
  void start_buzzer_pwm_with_freq(int freq) {
@@ -399,7 +376,7 @@
      for (;;) {
          // Check Distance Mode and Start Next Note ---
          if (xTaskGetTickCount() >= xNoteEndTime && xSemaphoreTake(xDistanceModeMutex, 0) == pdTRUE) { // Use a short wait, not MAX_DELAY
-             if (distanceMode == TOO_CLOSE) {
+             if (distanceMode == TOO_CLOSE || isButtonPressed()) {
                  // Calculate next note duration in ticks
                  TickType_t xDurationTicks = pdMS_TO_TICKS((int)((double)duration_array[i] * 0.3));
 
@@ -425,17 +402,18 @@
 
  int main(void) {
 
-     /* Init board hardware. */
-     BOARD_InitBootPins();
-     BOARD_InitBootClocks();
-     BOARD_InitBootPeripherals();
+	 /* Init board hardware. */
+	 BOARD_InitBootPins();
+	 BOARD_InitBootClocks();
+	 BOARD_InitBootPeripherals();
  #ifndef BOARD_INIT_DEBUG_CONSOLE_PERIPHERAL
-     /* Init FSL debug console. */
-     BOARD_InitDebugConsole();
+	 /* Init FSL debug console. */
+	 BOARD_InitDebugConsole();
  #endif
-     setTPMClock();
-     initPWM();
-     initUART2_Bidirectional(BAUD_RATE);
+	 setTPMClock();
+	 initPWM();
+	 initUART2_Bidirectional(BAUD_RATE);
+	 initButton();
 
      // Create the FreeRTOS message queue for received data (QLEN messages, each of size TMessage)
    rx_queue = xQueueCreate(QLEN, sizeof(TMessage));
@@ -443,25 +421,25 @@
      PRINTF("Error: Failed to create FreeRTOS Queue.\r\n");
    }
 
-     xDistanceModeMutex = xSemaphoreCreateMutex();
+	 xDistanceModeMutex = xSemaphoreCreateMutex();
 
-     distanceMode = TOO_CLOSE;
+	 distanceMode = TOO_CLOSE;
 
 
-     if (xTaskCreate(buzzerTask, "BuzzerTask", configMINIMAL_STACK_SIZE + 200, NULL, 1, NULL) != pdPASS) {
-       PRINTF("BuzzerTask init fail.\r\n");
-     } else {
-       PRINTF("BuzzerTask init success.\r\n");
-     }
+	 if (xTaskCreate(buzzerTask, "BuzzerTask", configMINIMAL_STACK_SIZE + 200, NULL, 1, NULL) != pdPASS) {
+		 PRINTF("BuzzerTask init fail.\r\n");
+	 } else {
+		 PRINTF("BuzzerTask init success.\r\n");
+	 }
 
-     if (xTaskCreate(pollingTask, "PollingTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL) != pdPASS) {
-       PRINTF("pollingTask init fail.\r\n");
+	 if (xTaskCreate(pollingTask, "PollingTask", configMINIMAL_STACK_SIZE + 200, NULL, 2, NULL) != pdPASS) {
+		 PRINTF("pollingTask init fail.\r\n");
    } else {
      PRINTF("pollingTask init success.\r\n");
    }
 
-     if (xTaskCreate(ultrasonicDataProcessorTask, "DataProcessor", configMINIMAL_STACK_SIZE + 100, NULL, 3, NULL) != pdPASS) {
-       PRINTF("pollingTask init fail.\r\n");
+	 if (xTaskCreate(ultrasonicDataProcessorTask, "DataProcessor", configMINIMAL_STACK_SIZE + 200, NULL, 3, NULL) != pdPASS) {
+		 PRINTF("pollingTask init fail.\r\n");
    } else {
      PRINTF("pollingTask init success.\r\n");
    }
