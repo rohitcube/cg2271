@@ -258,7 +258,6 @@
        distanceMode = SAFE;
        } else {
        PRINTF("-> Unknown message format received. Message: %s\r\n", msg.message);
-       debug_compare_strings(NO_OBJECT_MESSAGE, msg.message);
        }
        } else {
          PRINTF("FAILED TO ACQUIRE SEMAPHORE");
