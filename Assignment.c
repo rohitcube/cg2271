@@ -241,7 +241,7 @@
   */
 	static void ultrasonicDataProcessorTask(void *p) {
 		while(1) {
-			PRINTF("Ultrasonic Data Processor Task Running...\r\n");
+//			PRINTF("Ultrasonic Data Processor Task Running...\r\n");
 			TMessage msg;
 			// Wait indefinitely for a message from the UART ISR queue
 			if (xQueueReceive(rx_queue, (TMessage *) &msg, portMAX_DELAY) == pdTRUE) {
@@ -279,11 +279,11 @@
  static void pollingTask(void *p) {
    const char *poll_message = "POLL_DATA";
    while(1) {
-     PRINTF("Polling Task Running. Sending '%s'\r\n", poll_message);
+//     PRINTF("Polling Task Running. Sending '%s'\r\n", poll_message);
      // Send the polling message. This enables the TX interrupt.
      sendMessage((char *)poll_message);
 
-     vTaskDelay(pdMS_TO_TICKS(300));
+     vTaskDelay(pdMS_TO_TICKS(400));
    }
  }
 
@@ -508,11 +508,16 @@ void joystickTask(void *p) {
 	for (;;) {
 		if (xSemaphoreTake(xThresholdMutex, 0) == pdTRUE) {
 		// Joystick pushed up, increment threshold to max of 2000 (2m)
-			if (result[0] > 40000) {
-				threshold = threshold + 50 > 2000 ? 2000 : threshold + 10;
+			if (result[0] > 50000) {
+				threshold = threshold + 50 > 2000 ? 2000 : threshold + 50;
+			} else if (result[0] > 40000) {
+				threshold = threshold + 30 > 2000 ? 2000 : threshold + 30;
+			// Joystick pushed down, decrement threshold to max of 200 (20cm)
+			} else if (result[0] < 30000) {
+				threshold = threshold - 30 < 200 ? 200 : threshold - 30;
 			// Joystick pushed down, decrement threshold to max of 200 (20cm)
 			} else if (result[0] < 20000) {
-				threshold = threshold - 50 < 200 ? 200 : threshold - 10;
+				threshold = threshold - 50 < 200 ? 200 : threshold - 50;
 			}
 			xSemaphoreGive(xThresholdMutex);
 		}
@@ -600,7 +605,7 @@ void ledTask(void *p) {
 
 	 distanceMode = SAFE;
 
-	 if (xTaskCreate(joystickTask, "JoystickTask", configMINIMAL_STACK_SIZE + 100, NULL, 0, NULL) != pdPASS) {
+	 if (xTaskCreate(joystickTask, "JoystickTask", configMINIMAL_STACK_SIZE + 100, NULL, 1, NULL) != pdPASS) {
 		 PRINTF("JoystickTask init fail.\r\n");
    } else {
      PRINTF("JoystickTask init success.\r\n");
@@ -612,19 +617,19 @@ void ledTask(void *p) {
 		 PRINTF("LedTask init success.\r\n");
 	 }
 
-	 if (xTaskCreate(buzzerTask, "BuzzerTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL) != pdPASS) {
+	 if (xTaskCreate(buzzerTask, "BuzzerTask", configMINIMAL_STACK_SIZE + 100, NULL, 1, NULL) != pdPASS) {
 		 PRINTF("BuzzerTask init fail.\r\n");
 	 } else {
 		 PRINTF("BuzzerTask init success.\r\n");
 	 }
 
-	 if (xTaskCreate(pollingTask, "PollingTask", configMINIMAL_STACK_SIZE + 100, NULL, 3, NULL) != pdPASS) {
+	 if (xTaskCreate(pollingTask, "PollingTask", configMINIMAL_STACK_SIZE + 100, NULL, 2, NULL) != pdPASS) {
 		 PRINTF("pollingTask init fail.\r\n");
    } else {
      PRINTF("pollingTask init success.\r\n");
    }
 
-	 if (xTaskCreate(ultrasonicDataProcessorTask, "DataProcessor", configMINIMAL_STACK_SIZE + 100, NULL, 4, NULL) != pdPASS) {
+	 if (xTaskCreate(ultrasonicDataProcessorTask, "DataProcessor", configMINIMAL_STACK_SIZE + 100, NULL, 3, NULL) != pdPASS) {
 		 PRINTF("ultrasonicDataProcessorTask init fail.\r\n");
    } else {
      PRINTF("ultrasonicDataProcessorTask init success.\r\n");
